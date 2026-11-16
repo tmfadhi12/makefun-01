@@ -70,7 +70,10 @@ if (issue !== null) fail(`the model wrote a board the gate refuses: ${issue}`, 1
 const boardRows = rows.map(({ farm: _farm, ...row }: Record<string, unknown>) => row);
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: boardRows })}\n`);
-writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\n`);
+// data.js hands the page the sealed snapshot and a digest of board.json, so the page can re-run the model
+// and show how many of its rows match the file it sits beside.
+const digest = rows.map((r: Record<string, unknown>) => [r.slug, r.rank, r.implied_value_usd, r.verdict, r.net_base_usd, r.rank_lo, r.rank_hi]);
+writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\nwindow.BOARD=${JSON.stringify(digest)};\n`);
 const pages = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 
