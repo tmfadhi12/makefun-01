@@ -1,19 +1,20 @@
 // Token radar entry for token-radar-01 (Node 22.18 or later, standard library only).
 //
-// Reads the sealed snapshot at /input/snapshot.json, scores every pre-token protocol with the model
-// in lib/model.ts, and writes /output/board.json (the ranked board), /output/data.js (the dashboard's
-// data), /output/dashboard/, /output/screenshots/ and /output/dossier.json.
+// Reads the sealed snapshot at /input/snapshot.json, prices every pre-token protocol with the model in
+// dashboard/model.js (the same script the page runs), and writes /output/board.json, /output/data.js,
+// /output/dashboard/, /output/screenshots/ and /output/dossier.json.
 //
 // Outside the grader, point it at local folders:
 //   MAKEFUN_OUTPUT_DIR=out node main.ts --input path/to/snapshot.json
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot, SnapshotError } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
+const Radar = createRequire(import.meta.url)('./dashboard/model.js');
 
 const TEXT_MAX_BYTES = 65_536;
 const SCREENSHOT_CAPS = { max: 4, max_bytes: 524_288 };
@@ -53,21 +54,23 @@ const inputFile = inputArg.endsWith('.json') ? inputArg : join(inputArg, 'snapsh
 if (!existsSync(inputFile)) fail(`no snapshot at ${inputFile}: pass --input <snapshot.json|folder>`, 2);
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
-let snapshot;
+let snapshot: { protocols: unknown[]; watchlist: string[] };
 try {
-  snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-} catch (error) {
-  if (error instanceof SnapshotError) fail(error.message, 2);
-  throw error;
+  snapshot = JSON.parse(readFileSync(inputFile, 'utf8'));
+} catch {
+  fail('snapshot.json is not JSON', 2);
 }
+if (!Array.isArray(snapshot.protocols) || !Array.isArray(snapshot.watchlist)) fail('snapshot.json has no protocols or watchlist', 2);
 
-const { board, radar } = buildRadar(snapshot);
-const issue = boardIssue(board, snapshot);
+const { model, rows } = Radar.buildBoard(snapshot);
+const issue = Radar.boardIssue(rows, snapshot);
 if (issue !== null) fail(`the model wrote a board the gate refuses: ${issue}`, 1);
 
+// board.json carries the ranked rows without the page's structured plan, which is rebuilt in the page.
+const boardRows = rows.map(({ farm: _farm, ...row }: Record<string, unknown>) => row);
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
-writeFileSync(join(out, 'data.js'), dataScript(radar));
+writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: boardRows })}\n`);
+writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\n`);
 const pages = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 
@@ -77,7 +80,8 @@ for (const name of shots) if (!IMAGE_NAME.test(name)) fail(`screenshots/${name}:
 // The dossier goes last: the scorer rebuilds it from this folder and compares the bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: DASHBOARD_CAPS }));
 
+const early = rows.filter((r: { on_watchlist: boolean }) => !r.on_watchlist).length;
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${radar.watchlist_size} on the watchlist, ${board.length} rows ranked (${radar.early_size} early), ${radar.live_size} live protocols used for calibration\n` +
+  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${rows.length} rows ranked (${early} early), priced off ${model.n} trading protocols\n` +
     `token radar: wrote board.json, data.js, dashboard/ (${pages.length} files), screenshots/ (${shots.length} images) and dossier.json to ${out}\n`,
 );
