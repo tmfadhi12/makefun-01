@@ -58,6 +58,7 @@ td.rank { font: 600 12px var(--mono); color: var(--muted); width: 38px; }
 td.name { font-weight: 600; max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
 .pill { display: inline-block; font: 600 10px var(--sans); letter-spacing: 0.05em; text-transform: uppercase; border: 1px solid var(--ink); padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
 .pill.w { background: var(--ink); color: var(--paper); }
+.pill.fee { border-color: var(--bad); color: var(--bad); }
 .up { color: var(--good); } .down { color: var(--bad); }
 .val { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .bar { width: 70px; height: 7px; background: var(--line); }

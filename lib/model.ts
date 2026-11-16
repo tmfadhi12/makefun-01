@@ -234,6 +234,7 @@ export interface FarmPlan {
   capital_usd: number;
   gas_usd: number;
   days: number;
+  fee_pct: number;
 }
 
 const CHEAP_FAST = new Set(['solana', 'sui', 'aptos', 'ton', 'near', 'sei', 'injective', 'cosmos', 'osmosis', 'hyperliquid l1', 'hyperliquid', 'sonic']);
@@ -278,11 +279,17 @@ function dollars(n: number): string {
   return `$${n >= 100 ? Math.round(n) : n >= 10 ? n.toFixed(0) : n.toFixed(2)}`;
 }
 
+/** The most a plan asks a reader to put in. Past it, the plan says the fees are high instead of asking for more. */
+export const CAPITAL_CAP = 500;
+
+/** Fees above this share of the position are flagged on the board and in the plan. */
+export const HIGH_FEE_SHARE = 0.05;
+
 function capitalFor(tvl: number, gasTotal: number): number {
   const base = tvl >= 1_000_000_000 ? 200 : tvl >= 250_000_000 ? 150 : tvl >= 100_000_000 ? 100 : 50;
   // Fees should stay under 5% of the position, or the farm costs more than it can return.
-  const floorForGas = Math.ceil(gasTotal / 0.05 / 50) * 50;
-  return Math.max(base, floorForGas);
+  const floorForGas = Math.ceil(gasTotal / HIGH_FEE_SHARE / 50) * 50;
+  return Math.min(CAPITAL_CAP, Math.max(base, floorForGas));
 }
 
 function weeksFor(age: number | null): number {
@@ -296,9 +303,15 @@ export function farmPlan(p: SnapshotProtocol, age: number | null): FarmPlan {
   const chain = cheapestChain(p.chains);
   const gas = gasPerTx(chain);
   const weeks = weeksFor(age);
-  const txCount = 3 + weeks * 2 + 2;
+  // Where one transaction costs a dollar or more, act every second week instead of every week.
+  const costly = gas >= 1;
+  const activeWeeks = costly ? Math.ceil(weeks / 2) : weeks;
+  const txCount = 3 + activeWeeks * 2 + 2;
   const gasTotal = Math.round(txCount * gas * 100) / 100;
   const capital = capitalFor(p.tvl_usd, gasTotal);
+  const feeShare = gasTotal / capital;
+  const feePct = Math.round(feeShare * 1000) / 10;
+  const often = costly ? 'every second week' : 'each week';
   const kind = archetypeOf(p.category);
   const name = p.name;
   const money = dollars(capital);
@@ -338,9 +351,9 @@ export function farmPlan(p: SnapshotProtocol, age: number | null): FarmPlan {
     time: '20 minutes',
   });
   steps.push({
-    text: weekly[kind],
-    cost: `about ${dollars(gas * 2)} in fees each week`,
-    time: '15 minutes a week',
+    text: costly ? weekly[kind].replace(/^Each week/, 'Every second week') : weekly[kind],
+    cost: `about ${dollars(gas * 2)} in fees ${often}`,
+    time: costly ? '15 minutes every second week' : '15 minutes a week',
   });
   steps.push({
     text: `Keep the position open for ${weeks} weeks. ${age === null ? 'DefiLlama gives no start date for this protocol, so assume a long window.' : age < 180 ? `DefiLlama began tracking it ${age} days ago, so a rewards program, if one comes, is likely to count early users.` : `DefiLlama has tracked it for ${age} days with no token, so rewards, if any, may weigh how long a wallet stayed.`}`,
@@ -374,12 +387,19 @@ export function farmPlan(p: SnapshotProtocol, age: number | null): FarmPlan {
       time: '20 minutes',
     });
   }
+  if (feeShare > HIGH_FEE_SHARE) {
+    steps.push({
+      text: `Fees are high here: about ${dollars(gasTotal)} over the plan is ${feePct}% of a ${money} position, because ${chain} charges about ${dollars(gas)} a transaction and no cheaper chain is recorded. Skip it unless you can hold a larger position, or wait for fees to fall.`,
+      cost: `${feePct}% of the position goes to fees`,
+      time: 'decide before you deposit',
+    });
+  }
   steps.push({
     text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes. Never sign a message that asks for approval on your whole balance. Write the dates and transaction hashes in a log.`,
     cost: 'no fee to check, and never pay to claim',
     time: '15 minutes',
   });
-  return { steps, farm_chain: chain, capital_usd: capital, gas_usd: gasTotal, days: weeks * 7 };
+  return { steps, farm_chain: chain, capital_usd: capital, gas_usd: gasTotal, days: weeks * 7, fee_pct: feePct };
 }
 
 /** A step as one string, inside the gate's 20 to 600 characters. */
@@ -413,6 +433,7 @@ export interface BoardRow {
   farm_gas_usd: number;
   farm_days: number;
   farm_chain: string;
+  farm_fee_pct: number;
   farm_steps: string[];
 }
 
@@ -492,6 +513,7 @@ export function buildBoard(snapshot: Snapshot, cal: Calibration): { board: Board
       farm_gas_usd: plan.gas_usd,
       farm_days: plan.days,
       farm_chain: plan.farm_chain,
+      farm_fee_pct: plan.fee_pct,
     };
     board.push({ ...base, farm_steps: plan.steps.map(stepText) });
     radar.push({ ...base, plan: plan.steps });

@@ -152,7 +152,7 @@
         el('td', { cls: 'num', text: age(r.age_days) }),
         el('td', { cls: 'num' }, [el('div', { cls: 'val' }, [el('span', { text: usd(r.implied_value_usd) }), el('span', { cls: 'bar' }, [el('i', { style: 'width:' + Math.max(2, Math.round(100 * Math.sqrt(r.implied_value_usd / maxImplied))) + '%' })])])]),
         el('td', { cls: 'conf ' + r.confidence, text: r.confidence }),
-        el('td', { cls: 'num', text: usd(r.farm_capital_usd) })
+        el('td', { cls: 'num' }, [usd(r.farm_capital_usd), r.farm_fee_pct > 5 ? el('span', { cls: 'pill fee', text: 'fees ' + Math.round(r.farm_fee_pct) + '%', title: 'Fees are more than 5% of the position' }) : null])
       ]);
       function pick() { state.sel = r.slug; Array.prototype.forEach.call(tbody.children, function (x) { x.setAttribute('aria-selected', 'false'); }); tr.setAttribute('aria-selected', 'true'); drawDetail(); }
       tr.addEventListener('click', pick);
@@ -186,7 +186,7 @@
       el('div', { cls: 'total' }, [el('span', { text: 'Implied value' }), el('span', { text: usd(recompute(r)) + (check ? ' ✓ matches board.json' : ' ✗ differs') })])
     ]));
 
-    box.appendChild(el('h3', { text: 'Farm plan · about ' + usd(r.farm_capital_usd) + ' of capital, ' + usd(r.farm_gas_usd) + ' of fees, ' + r.farm_days + ' days' }));
+    box.appendChild(el('h3', { text: 'Farm plan · about ' + usd(r.farm_capital_usd) + ' of capital, ' + usd(r.farm_gas_usd) + ' of fees (' + r.farm_fee_pct + '% of it), ' + r.farm_days + ' days' }));
     var ol = el('ol', { cls: 'steps' });
     r.plan.forEach(function (s) {
       ol.appendChild(el('li', null, [s.text, el('span', { cls: 'meta', text: 'Cost: ' + s.cost + ' · Time: ' + s.time })]));
