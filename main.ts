@@ -62,8 +62,33 @@ try {
 }
 if (!Array.isArray(snapshot.protocols) || !Array.isArray(snapshot.watchlist)) fail('snapshot.json has no protocols or watchlist', 2);
 
+interface Row { slug: string; rank: number; implied_value_usd: number; farm_steps: string[] }
+
+/** Why a board would fail the gate, or null: the scorer's own rows, checked before anything is written. */
+function boardIssue(rows: Row[], snap: { protocols: { slug: string }[]; watchlist: string[] }): string | null {
+  if (rows.length < 100 || rows.length > 4000) return `the board has ${rows.length} rows, the gate takes 100 to 4000`;
+  const known = new Set(snap.protocols.map((p) => p.slug));
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (seen.has(r.slug)) return `slug twice: ${r.slug}`;
+    if (!known.has(r.slug)) return `unknown slug ${r.slug}`;
+    seen.add(r.slug);
+  }
+  if (snap.watchlist.some((s) => !seen.has(s))) return 'the board misses a watchlist slug';
+  if (rows.length - snap.watchlist.length < 60) return 'fewer than 60 rows outside the watchlist';
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    if (r.rank !== i + 1) return `rank ${i + 1} is ${r.rank}`;
+    if (i > 0 && r.implied_value_usd > rows[i - 1]!.implied_value_usd) return `row ${i + 1} outranks row ${i}`;
+    if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0) return `${r.slug} has a bad implied value`;
+    if (r.farm_steps.length < 3 || r.farm_steps.length > 12) return `${r.slug} has ${r.farm_steps.length} farm steps`;
+    for (const s of r.farm_steps) if (s.trim().length < 20 || s.trim().length > 600) return `${r.slug} has a farm step of ${s.trim().length} characters`;
+  }
+  return rows[0]!.implied_value_usd === rows[rows.length - 1]!.implied_value_usd ? 'every row has the same implied value' : null;
+}
+
 const { model, rows } = Radar.buildBoard(snapshot);
-const issue = Radar.boardIssue(rows, snapshot);
+const issue = boardIssue(rows, snapshot);
 if (issue !== null) fail(`the model wrote a board the gate refuses: ${issue}`, 1);
 
 // board.json carries the ranked rows without the page's structured plan, which is rebuilt in the page.
