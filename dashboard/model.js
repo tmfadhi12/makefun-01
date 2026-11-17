@@ -1,7 +1,4 @@
-// Radar model, shared by main.ts (writes board.json) and the page (draws it). One function prices every row:
-// fitCompsCurve() on the clean traded tokens, blindTest() and timeSplitTest() for its error, impliedValue() with
-// capped growthTilt() and timeTilt(), rankRanges() by resampling, farmPlan() and minTicket() for the money,
-// planFarms() for a basket under a budget and hours a week.
+// Radar model, shared by main.ts (board.json) and the page: one function prices every row.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.RadarModel = factory();
@@ -49,7 +46,7 @@
   function recordsToken(p) { return p.mcap_usd !== null || p.gecko_id !== null || p.symbol !== null; }
   function canLaunch(p) { return !recordsToken(p) && !setAsideReason(p); }
 
-  // ---- the curve and its tests ----------------------------------------------------------------
+  // the curve and its tests
   function fitCompsCurve(set) {
     var n = set.length, mx = 0, my = 0;
     set.forEach(function (f) { mx += f.x; my += f.y; });
@@ -67,7 +64,7 @@
   }
   function curveLog(m, x, cat) { return m.base + m.slope * (x - m.x0) + (m.off[cat] || 0); }
 
-  // Misses of a fit made without each comparable: 'flat' (one multiple), 'size' (no categories) or 'full'.
+  // Misses of a fit made without each comparable.
   function blindTest(set, kind) {
     return set.map(function (f, i) {
       var rest = set.filter(function (_, j) { return j !== i; });
@@ -117,7 +114,7 @@
     return m;
   }
 
-  // ---- value -----------------------------------------------------------------------------------
+  // value
   function growthTilt(p) { return clamp(1 + P.growthPerPct * clamp(p.change_7d == null ? 0 : p.change_7d, -50, 100), P.growthLo, P.growthHi); }
   function timeTilt(age) { return age === null ? 1 : P.ageLo + (P.ageSpan * Math.min(age, P.ageCap)) / P.ageCap; }
   function impliedValue(m, p, asOf) {
@@ -156,7 +153,7 @@
     return ranks.map(function (r) { return [quantile(r, 0.1), quantile(r, 0.9)]; });
   }
 
-  // ---- farm economics --------------------------------------------------------------------------
+  // farm economics
   var CHEAP = ['solana', 'sui', 'aptos', 'ton', 'near', 'sei', 'injective', 'cosmos', 'osmosis', 'hyperliquid l1', 'hyperliquid', 'sonic'];
   var LOW = ['bsc', 'binance', 'polygon', 'arbitrum', 'optimism', 'base', 'linea', 'scroll', 'zksync era', 'blast', 'mantle', 'mode', 'avalanche', 'gnosis', 'fantom', 'berachain', 'unichain', 'ink', 'plasma', 'monad', 'megaeth'];
   function feePerTx(c) {
@@ -197,12 +194,10 @@
     var perDollar = (value * share) / tvl, prop = P.friction + (P.tbill * days) / 365;
     return perDollar <= prop ? Infinity : fees / (perDollar - prop);
   }
-  // Tier = the launch chance needed to break even: farm up to 25%, close to 50%, thin to 100%, skip above.
-  function tierOf(needBase) {
-    return needBase <= P.oddsBar ? 'farm' : needBase <= 2 * P.oddsBar ? 'close' : needBase <= 1 ? 'thin' : 'skip';
-  }
+  // Tier = how often the blind misses keep the net above zero if a launch happens: robust 75%+, farm 50%+, thin 25%+, skip.
+  function tierOf(odds) { return odds >= 0.75 ? 'robust' : odds >= 0.5 ? 'farm' : odds >= 0.25 ? 'thin' : 'skip'; }
 
-  function farmPlan(p, v, o) {
+  function farmPlan(p, v, o, m) {
     var C = o.capital, share = o.share, chain = cheapestChain(p.chains), fee = feePerTx(chain);
     var weeks = v.age === null ? 6 : v.age < 180 ? 8 : v.age < 365 ? 6 : 4, costly = fee >= 1;
     var active = costly ? Math.ceil(weeks / 2) : weeks, days = weeks * 7, fees = (3 + active * 2 + 2) * fee;
@@ -210,7 +205,9 @@
     var e = economics(p.tvl_usd, values, fees, days, C, share);
     var needBase = e.reward.base > 0 ? e.costs / e.reward.base : Infinity, needLow = e.reward.low > 0 ? e.costs / e.reward.low : Infinity;
     var minBase = minTicket(p.tvl_usd, v.value, fees, days, share), minLow = minTicket(p.tvl_usd, v.low, fees, days, share);
-    var paysFrom = (e.costs * p.tvl_usd) / (v.low * C), tier = tierOf(needBase);
+    var be = (e.costs * p.tvl_usd) / (share * C), need = Math.log(be / v.value);
+    var odds = m.errs.filter(function (x) { return x >= need; }).length / m.errs.length;
+    var paysFrom = (e.costs * p.tvl_usd) / (v.low * C), tier = tierOf(odds);
     var name = p.name, cap = money(C), tenth = money(C * 0.1), when = costly ? 'Every second week ' : 'Each week ';
     var core = {
       lending: 'Deposit ' + cap + ' of a stable asset into ' + name + ' on ' + chain + ' as collateral, and keep the loan-to-value under 40% if you borrow.',
@@ -244,20 +241,20 @@
     ];
     if (p.chains.length > 1) steps.push({ text: 'Make one small action on a second chain with the same wallet, since ' + name + ' records TVL on ' + p.chains.length + ' chains.', cost: 'about ' + money(Math.max(fee, feePerTx(p.chains[1])) * 2) + ' in fees', time: '20 minutes' });
     steps.push({
-      text: 'If a launch happens, ' + cap + ' at a farmer share of ' + Math.round(share * 100) + '% earns ' + money(e.reward.base) + ' (band ' + money(e.reward.low) + ' to ' + money(e.reward.high) + ') against ' + money(e.costs) + ' of fees, friction and T-bill carry: ' + signed(e.net.base) + '. It needs a launch chance of ' + (isFinite(needBase) ? pct(Math.min(needBase, 9.99)) : 'more than 100%') + ' to break even. ' + (isFinite(minBase) ? 'The smallest ticket that pays is ' + money(minBase) + '.' : 'No ticket pays: each dollar\'s slice is below the T-bill return.') + ' Tier: ' + tier + '.' + (fees / C > P.highFee ? ' Fees alone are ' + Math.round((fees / C) * 100) + '% of the ticket.' : ''),
+      text: 'If a launch happens, ' + cap + ' at a farmer share of ' + Math.round(share * 100) + '% earns ' + money(e.reward.base) + ' (band ' + money(e.reward.low) + ' to ' + money(e.reward.high) + ') against ' + money(e.costs) + ' of fees, friction and T-bill carry: ' + signed(e.net.base) + '. It needs a launch chance of ' + (isFinite(needBase) ? pct(Math.min(needBase, 9.99)) : 'more than 100%') + ' to break even. ' + (isFinite(minBase) ? 'The smallest ticket that pays is ' + money(minBase) + '.' : 'No ticket pays: each dollar\'s slice is below the T-bill return.') + ' The band keeps the net above zero ' + pct(odds) + ' of the time. Tier: ' + tier + '.' + (fees / C > P.highFee ? ' Fees alone are ' + Math.round((fees / C) * 100) + '% of the ticket.' : ''),
       cost: money(e.costs) + ' in all', time: 'decide before you deposit'
     });
     steps.push({ text: 'Before you withdraw, open the protocol\'s own rewards page and claim only from the link it publishes. Never sign a message that approves your whole balance. Log the dates and transaction hashes.', cost: 'no fee to check, and never pay to claim', time: '15 minutes' });
     return {
       chain: chain, fee: fee, weeks: weeks, active: active, costly: costly, days: days, fees: fees, hours: hours,
       capital: C, share: share, costs: e.costs, friction: e.friction, carry: e.carry, reward: e.reward, net: e.net,
-      needBase: needBase, needLow: needLow, minBase: minBase, minLow: minLow, paysFrom: paysFrom, tier: tier, steps: steps
+      needBase: needBase, needLow: needLow, minBase: minBase, minLow: minLow, paysFrom: paysFrom, be: be, odds: odds, tier: tier, steps: steps
     };
   }
   function stepText(s) { var t = s.text + ' Cost: ' + s.cost + '. Time: ' + s.time + '.'; return t.length > 600 ? t.slice(0, 596) + '...' : t; }
   function finite(x) { return isFinite(x) ? x : null; }
 
-  // ---- the board -------------------------------------------------------------------------------
+  // the board
   function buildBoard(snap, opts) {
     opts = { capital: (opts && opts.capital) || P.capital, share: (opts && opts.share) || P.share };
     var m = fit(snap), onList = {}, chosen = {}, bySlug = {};
@@ -272,12 +269,12 @@
     var cached = rankCache && rankCache.get(snap), ranges = cached && cached.n === list.length ? cached.r : rankRanges(m, list, snap.as_of);
     if (rankCache) rankCache.set(snap, { n: list.length, r: ranges });
     var rows = list.map(function (p, i) {
-      var v = impliedValue(m, p, snap.as_of), f = farmPlan(p, v, opts);
+      var v = impliedValue(m, p, snap.as_of), f = farmPlan(p, v, opts, m);
       return {
         slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d,
         age_days: v.age, on_watchlist: !!onList[p.slug], implied_value_usd: v.value, value_low_usd: v.low, value_high_usd: v.high,
         confidence: v.confidence, ratio: r4(v.ratio), growth_multiplier: r4(v.growth), age_multiplier: r4(v.ageMult), category_sample: v.catN,
-        verdict: f.tier, net_base_usd: r2(f.net.base), launch_odds_needed: finite(r4(f.needBase)),
+        verdict: f.tier, net_base_usd: r2(f.net.base), break_even_odds: r4(f.odds), launch_odds_needed: finite(r4(f.needBase)),
         min_ticket_usd: isFinite(f.minBase) ? Math.ceil(f.minBase) : null, pays_from_share: r4(f.paysFrom),
         net_per_hour_usd: r2(f.net.base / f.hours), rank_lo: ranges[i][0], rank_hi: ranges[i][1],
         farm_chain: f.chain, farm: f, farm_steps: f.steps.map(stepText)
@@ -288,13 +285,13 @@
     var aside = snap.protocols.filter(function (p) { return !recordsToken(p) && setAsideReason(p); })
       .sort(function (a, b) { return b.tvl_usd - a.tvl_usd; })
       .map(function (p) { return { name: p.name, category: p.category, tvl: p.tvl_usd, reason: setAsideReason(p) }; });
-    var tiers = { farm: 0, close: 0, thin: 0, skip: 0 };
+    var tiers = { robust: 0, farm: 0, thin: 0, skip: 0 };
     rows.forEach(function (r) { tiers[r.verdict]++; });
     return { model: m, rows: rows, opts: opts, aside: aside, tiers: tiers, withToken: snap.protocols.filter(recordsToken).length };
   }
 
-  // ---- the planner -----------------------------------------------------------------------------
-  // Best low-band net per hour first, at the smallest paying ticket; one setup per chain; leftover money to the best return per dollar.
+  // the planner
+  // Best low-band net per hour first; leftover money to the best return per dollar.
   function planFarms(board, budget, hours) {
     var share = board.opts.share;
     var cand = board.rows.filter(function (r) { return isFinite(r.farm.minLow); }).map(function (r) {
