@@ -3,6 +3,7 @@
 'use strict';
 var S = window.SNAPSHOT, M = window.RadarModel, FILE = window.BOARD;
 if (!S || !M) return;
+var LABEL = { farm: 'Worth farming', marginal: 'Marginal', skip: 'Skip' };
 var D = M.PARAMS, main = document.getElementById('main'), board, bySlug;
 var st = {
   tab: 'board', q: '', cat: 'all', chain: 'all', tier: 'all', minTvl: 0, list: false, sort: 'rank', dir: 1,
@@ -69,9 +70,7 @@ function header() {
   box.appendChild(el('span', { cls: 'stamp' + (good ? ' ok' : ' bad') }, ['page = board.json: ' + ok + ' of ' + base.rows.length + ' rows match', el('span', { cls: 'long', text: '(rank, value, tier, net, rank range)' })]));
   var total = board.rows.length + board.aside.length + board.withToken;
   box.appendChild(el('span', { cls: 'stamp plain', text: total + ' of ' + S.protocols.length + ' protocols accounted for' }));
-  var top = board.rows.slice(0, 10), never = top.filter(function (r) { return r.min_ticket_usd === null; }).length;
-  var best = board.rows.filter(function (r) { return r.verdict === 'robust'; }).sort(function (a, b) { return b.net_per_hour_usd - a.net_per_hour_usd; }).slice(0, 3);
-  st.find = { never: never, best: best };
+  st.best = board.rows.filter(function (r) { return r.verdict === 'farm'; }).sort(function (a, b) { return b.net_per_hour_usd - a.net_per_hour_usd; })[0];
   document.getElementById('finding').textContent = 'Snapshot of ' + S.as_of + ' · priced off ' + board.model.n + ' clean traded tokens · implied value is this page\'s claim, never a forecast that a token launches';
 }
 
@@ -139,22 +138,25 @@ function planPanel() {
       el('button', { type: 'button', cls: 'btn', text: 'Download board CSV', onclick: downloadCsv })])]);
 }
 
+function kpi(items) {
+  return el('div', { cls: 'kpi' }, items.map(function (x) { return el('div', null, [el('b', { text: x[0] }), el('span', { text: x[1] })]); }));
+}
 function hero() {
-  var f = st.find, names = f.best.map(function (r) { return r.name; }).join(', ');
+  var m = board.model, t = board.tiers, b = st.best, band = m.bands[0], inList = board.rows.filter(function (r) { return r.on_watchlist; }).length;
   return el('section', { cls: 'hero' }, [
     el('h2', { text: board.rows.length + ' protocols record no token. Here is what each launch would be worth, and what farming it nets.' }),
-    el('p', { text: 'Each value is read off a curve fitted to the ' + board.model.n + ' clean tokens that already trade; one function in model.js prices every row here and in board.json. Each plan is netted against fees, friction and the T-bill return: ' + f.never + ' of the 10 largest pay at no ticket size, while ' + (names || 'none') + ' pay best per hands-on hour.' }),
+    el('p', { text: 'Each value is read off a curve fitted to the ' + m.n + ' clean tokens that already trade. One function in model.js prices every row here and in board.json, and each plan is netted against fees, friction and the T-bill return.' }),
+    kpi([[String(board.rows.length), 'record no token; ' + inList + ' of ' + S.watchlist.length + ' watchlist protocols ranked'],
+      ['×' + m.backtest.full.median.toFixed(2), 'median miss when each traded token is left out; one flat multiple misses ×' + m.backtest.flat.median.toFixed(2)],
+      [Math.round(band.blind * 100) + '%', 'of held-out market caps land inside the printed P25 to P75 band, ' + Math.round(band.newer * 100) + '% on the newest tokens'],
+      [String(t.farm), 'worth farming at ' + usd(st.capital) + '; ' + t.marginal + ' marginal, ' + t.skip + ' skip'],
+      [b ? net(b.net_per_hour_usd) + '/h' : 'none', b ? 'best net per hands-on hour: ' + b.name : 'no plan clears the farm bar']]),
     accounting()]);
 }
-
 function buildPanel() {
-  var m = board.model, b = m.backtest, t = board.tiers, inList = board.rows.filter(function (r) { return r.on_watchlist; }).length;
-  function fig(big, label) { return el('div', null, [el('b', { text: big }), el('span', { text: label })]); }
+  var m = board.model, b = m.backtest;
   return el('section', { cls: 'panel', 'aria-label': 'How a value is built' }, [
     el('h2', { text: 'How a value is built, and how it tested' }),
-    el('div', { cls: 'figs' }, [
-      fig(String(board.rows.length), 'ranked, no token'), fig(inList + ' / ' + S.watchlist.length, 'watchlist covered'),
-      fig(t.robust + ' · ' + t.farm + ' · ' + t.thin + ' · ' + t.skip, 'robust · farm · thin · skip at ' + usd(st.capital))]),
     mini(['Each adds a term', 'Blind miss', '≤ ×3', 'Rank ρ', 'Newer miss'], m.ablation.map(function (a, i) {
       return [a.label + (i === 2 ? ' · used' : i > 2 ? ' · capped' : ''), '×' + a.miss.toFixed(2), Math.round(a.within3 * 100) + '%', a.rho === null ? '–' : a.rho.toFixed(2), '×' + a.newer.toFixed(2)];
     }), 'compareModels()', 2),
@@ -223,7 +225,7 @@ function controls() {
     field('Search', el('input', { type: 'search', value: st.q, placeholder: 'Name or category', oninput: function (e) { st.q = e.target.value; fill(); } })),
     pick('Category', st.cat, all.concat(cats.map(function (c) { return [c, c]; })), function (v) { st.cat = v; render(); }),
     pick('Chain', st.chain, all.concat(chains.map(function (c) { return [c, c]; })), function (v) { st.chain = v; render(); }),
-    pick('Tier', st.tier, [['all', 'Any'], ['robust', 'Robust'], ['farm', 'Farm'], ['thin', 'Thin'], ['skip', 'Skip']], function (v) { st.tier = v; render(); }),
+    pick('Tier', st.tier, [['all', 'Any'], ['farm', 'Farm'], ['marginal', 'Marginal'], ['skip', 'Skip']], function (v) { st.tier = v; render(); }),
     pick('Min TVL', st.minTvl, [[0, 'Any'], [1e7, '$10M'], [5e7, '$50M'], [1e8, '$100M'], [5e8, '$500M']], function (v) { st.minTvl = Number(v); render(); }),
     pick('Ticket', st.capital, [250, 500, 1000, 5000].map(function (c) { return [c, usd(c)]; }), function (v) { st.capital = Number(v); recompute(); render(); }),
     el('label', { cls: 'check' }, [box, 'Watchlist only']),
@@ -272,34 +274,6 @@ function fill() {
 }
 
 // protocol file
-// A costed farm timeline: what has been spent by each week, against what a launch would pay at the end.
-function timeline(f) {
-  var W = 560, H = 150, L = 48, R = 12, T = 12, B = 26, weeks = f.weeks, spent = [], total = 0;
-  for (var w = 0; w <= weeks; w++) {
-    var tx = w === 0 ? 3 : 0;
-    if (w > 0 && (!f.costly || w % 2 === 1)) tx += 2;
-    if (w === weeks) tx += 2;
-    total += tx * f.fee + (w === 0 ? f.friction / 2 : 0) + (w > 0 ? f.carry / weeks : 0) + (w === weeks ? f.friction / 2 : 0);
-    spent.push({ w: w, tx: tx, total: total });
-  }
-  var step = Math.pow(10, Math.floor(Math.log(Math.max(total, f.reward.base)) / Math.LN10)), top = Math.ceil((Math.max(total, f.reward.base) * 1.15) / step) * step;
-  function X(v) { return L + (v / weeks) * (W - L - R); }
-  function Y(v) { return T + (1 - v / top) * (H - T - B); }
-  var g = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Costs spent by week against the reward if a launch happens' });
-  [0, top / 2].forEach(function (v) { g.appendChild(sv('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: 'var(--rule)' })); g.appendChild(sv('text', { x: L - 6, y: Y(v) + 4, 'text-anchor': 'end' }, usd(v))); });
-  spent.forEach(function (s) {
-    if (s.tx) g.appendChild(sv('rect', { x: X(s.w) - 3, y: Y(s.tx * f.fee), width: 6, height: Math.max(1, Y(0) - Y(s.tx * f.fee)), fill: 'var(--muted)' }));
-    g.appendChild(sv('text', { x: X(s.w), y: H - 8, 'text-anchor': 'middle' }, s.w === 0 ? 'start' : 'wk ' + s.w));
-  });
-  g.appendChild(sv('polyline', { points: spent.map(function (s) { return X(s.w) + ',' + Y(s.total); }).join(' '), fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1.6 }));
-  g.appendChild(sv('text', { x: W - R, y: Y(total) - 5, 'text-anchor': 'end' }, 'spent by exit ' + usd(total)));
-  [['low', f.reward.low, 'var(--muted)'], ['base', f.reward.base, 'var(--data)']].forEach(function (x) {
-    g.appendChild(sv('line', { x1: L, x2: W - R, y1: Y(x[1]), y2: Y(x[1]), stroke: x[2], 'stroke-dasharray': '4 3' }));
-    g.appendChild(sv('text', { x: W - R, y: Y(x[1]) - 4, 'text-anchor': 'end' }, 'reward if launch, ' + x[0] + ' ' + usd(x[1])));
-  });
-  return g;
-}
-
 function protocolFile(r) {
   var f = r.farm, cat = r.category || 'Uncategorised';
   var p = S.protocols.filter(function (x) { return x.slug === r.slug; })[0], v = M.impliedValue(board.model, p, S.as_of);
@@ -307,10 +281,8 @@ function protocolFile(r) {
   var near = board.model.points.filter(function (c) { return c.clean; }).sort(function (a, b) {
     return (a.category === cat ? 0 : 1) - (b.category === cat ? 0 : 1) || Math.abs(Math.log(a.tvl / r.tvl_usd)) - Math.abs(Math.log(b.tvl / r.tvl_usd));
   }).slice(0, 4);
-  var ten = board.model.tenure, at = -1;
-  for (var i = 0; r.age_days !== null && i < ten.length; i++) if (r.age_days < ten[i].upTo) { at = i; break; }
-  var steps = el('ol', { cls: 'plan-steps' });
-  f.steps.forEach(function (s) { steps.appendChild(el('li', null, [s.text, el('small', { text: 'Cost: ' + s.cost + ' · Time: ' + s.time })])); });
+  var steps = el('table', { cls: 'mini steps', 'aria-label': 'Farm steps' }, [el('thead', null, [el('tr', null, ['When', 'Step', 'Cost', 'Time'].map(function (h) { return el('th', { text: h }); }))]),
+    el('tbody', null, f.steps.map(function (s) { return el('tr', null, [s.when, s.text, s.cost, s.time].map(function (c) { return el('td', { text: c }); })); }))]);
   return el('section', { cls: 'file', 'aria-label': 'Protocol file' }, [
     el('header', null, [
       el('div', null, [el('button', { type: 'button', cls: 'btn', text: 'Back to the board', onclick: function () { st.sel = null; render(); } }),
@@ -318,6 +290,8 @@ function protocolFile(r) {
         el('div', { cls: 'meta', text: '#' + r.rank + ' (rank range ' + r.rank_lo + '–' + r.rank_hi + ' over 200 refits) · ' + cat + ' · ' + r.chains.join(', ') + ' · ' + (r.on_watchlist ? 'on the watchlist' : 'below the watchlist') })]),
       el('div', null, [el('div', { cls: 'big', text: usd(r.implied_value_usd) }),
         el('div', { cls: 'meta', text: 'band ' + usd(r.value_low_usd) + ' to ' + usd(r.value_high_usd) + ' · confidence ' + r.confidence + ', ' + r.category_sample + ' clean traded token' + (r.category_sample == 1 ? '' : 's') + ' in ' + cat })])]),
+    kpi([[usd(f.capital), 'at risk for ' + f.weeks + ' weeks on ' + f.chain], [usd(f.costs), 'fees, friction and T-bill return given up'], [f.hours.toFixed(1) + ' h', 'of your time'],
+      [net(f.net.base), 'net if a launch happens, ' + net(f.net.low) + ' at the low end'], [pct(f.needBase), 'launch chance needed to break even']]),
     el('div', { cls: 'cols' }, [
       el('div', { cls: 'stack' }, [
         el('div', { cls: 'panel' }, [el('h2', { text: 'How the value is built' }), el('div', { cls: 'kv' }, [
@@ -326,25 +300,21 @@ function protocolFile(r) {
           kv('timeTilt(): ' + age(r.age_days) + ' with no token, capped', '×' + r.age_multiplier.toFixed(3)),
           kv('impliedValue()', usd(v.value) + (v.value === r.implied_value_usd ? ', same as board.json' : ', differs from board.json'), 'tot')])]),
         el('div', { cls: 'panel fig' }, [el('h2', { text: 'Against the traded tokens' }), chart(520, 220, r),
-          el('div', { cls: 'kv' }, near.map(function (c) { return kv(c.name + ' · TVL ' + usd(c.tvl), usd(c.mcap) + ' market cap, ×' + c.ratio.toFixed(2)); }))]),
-        el('div', { cls: 'panel' }, [el('h2', { text: 'How often a token comes, by time tracked' }),
-          mini(['Tracked for', 'Record a token', 'Share'], ten.map(function (b) { return [b.name, b.tok + ' of ' + b.n, Math.round(b.share * 100) + '%']; }), 'launchTenure()', at),
-          el('p', { cls: 'note' }, [code('launchTenure()'), ': this snapshot, not a forecast. The plan needs a launch chance of ' + pct(f.needBase) + (at >= 0 ? '; ' + Math.round(ten[at].share * 100) + '% tracked as long record a token.' : '.')])])]),
+          el('div', { cls: 'kv' }, near.map(function (c) { return kv(c.name + ' · TVL ' + usd(c.tvl), usd(c.mcap) + ' market cap, ×' + c.ratio.toFixed(2)); }))])]),
       el('div', { cls: 'panel' }, [
-        el('h2', { text: 'Farm at ' + usd(f.capital) + ' with a ' + Math.round(f.share * 100) + '% farmer share: ' + r.verdict }),
+        el('h2', null, ['Farm plan at ' + usd(f.capital) + ', ' + Math.round(f.share * 100) + '% farmer share ', el('span', { cls: 'pill t-' + r.verdict, text: LABEL[r.verdict] })]),
+        steps,
         el('div', { cls: 'kv' }, [
           kv('Reward if launch, low · base · high', usd(f.reward.low) + ' · ' + usd(f.reward.base) + ' · ' + usd(f.reward.high)),
           kv('Fees · friction · T-bill return given up', usd(f.fees) + ' · ' + usd(f.friction) + ' · ' + usd(f.carry)),
           kv('Net if launch, low · base · high', net(f.net.low) + ' · ' + net(f.net.base) + ' · ' + net(f.net.high), 'tot'),
           kv('Break-even value · odds the band reaches it', usd(f.be) + ' · ' + pct(f.odds)),
-          kv('Launch chance needed to break even', pct(f.needBase) + ' at the base value, ' + pct(f.needLow) + ' at the low end'),
+          kv('Launch chance needed, at the low end', pct(f.needLow)),
           kv('minTicket(): smallest ticket that pays', isFinite(f.minBase) ? usd(f.minBase) + ' at the base value, ' + (isFinite(f.minLow) ? usd(f.minLow) : 'none') + ' at the low end' : 'none: each dollar\'s slice is below the T-bill return'),
           kv('Pays at the low end from a farmer share of', pct(f.paysFrom)),
-          kv('Hands-on time · net per hour', f.hours.toFixed(1) + ' h · ' + net(r.net_per_hour_usd) + '/h')]),
-        el('h2', { cls: 'gap', text: 'Spent by week against the reward if a launch happens' }), timeline(f), steps,
-        el('p', { cls: 'note', text: 'Tier: the share of blind misses that keep the net above zero if a launch happens (robust 75%+, farm 50%+, thin 25%+). The farmer share is an assumption; the median airdrop is near 7.5% of supply.' })])])]);
+          kv('Net per hands-on hour', net(r.net_per_hour_usd) + '/h')]),
+        el('p', { cls: 'note', text: 'Tier: the share of blind misses that keep the net above zero if a launch happens (farm 80%+, marginal 60%+). The farmer share is an assumption; the median airdrop is near 7.5% of supply.' })])])]);
 }
-
 // export
 function copyPlan(p, button) {
   var lines = ['Pre-Token Radar plan, snapshot ' + S.as_of + ', budget ' + usd(st.budget) + ', ' + st.hours + ' h a week, farmer share ' + Math.round(st.share * 100) + '%'];

@@ -121,20 +121,6 @@ function bandCheck(set, errs) {
       blind: inside(errs, quantile(errs, q[0]), quantile(errs, q[1])), newer: inside(test, quantile(train, q[0]), quantile(train, q[1])) };
   });
 }
-// launchTenure(): the share of dated protocols that record a token, by time tracked.
-function launchTenure(snap) {
-  var t = [[180, 'under 6 mo'], [365, '6–12 mo'], [730, '1–2 y'], [1095, '2–3 y'], [1460, '3–4 y'], [Infinity, '4 y+']].map(function (b) { return { upTo: b[0], name: b[1], n: 0, tok: 0 }; });
-  snap.protocols.forEach(function (p) {
-    var a = ageDays(snap.as_of, p.listed_at);
-    if (a === null) return;
-    for (var i = 0; a >= t[i].upTo; i++);
-    t[i].n++;
-    if (recordsToken(p)) t[i].tok++;
-  });
-  t.forEach(function (b) { b.share = b.n ? b.tok / b.n : 0; });
-  return t;
-}
-
 var fitCache = typeof WeakMap === 'function' ? new WeakMap() : null;
 var rankCache = typeof WeakMap === 'function' ? new WeakMap() : null;
 function fit(snap) {
@@ -148,7 +134,7 @@ function fit(snap) {
   m.catN = {};
   set.forEach(function (f) { m.catN[f.cat] = (m.catN[f.cat] || 0) + 1; });
   m.backtest = { flat: score(blindTest(set, 'flat')), full: score(errs), split: timeSplitTest(set) };
-  m.ablation = compareModels(set, snap.as_of); m.bands = bandCheck(set, errs); m.tenure = launchTenure(snap);
+  m.ablation = compareModels(set, snap.as_of); m.bands = bandCheck(set, errs);
   var k = 0;
   m.points = all.map(function (f) {
     var clean = !setAsideReason(f.p), pred = clean ? Math.exp(f.y - errs[k++]) : Math.exp(curveLog(m, f.x, f.cat));
@@ -239,7 +225,7 @@ function minTicket(tvl, value, fees, days, share) {
   return perDollar <= prop ? Infinity : fees / (perDollar - prop);
 }
 // Tier: how often the blind misses keep the net above zero if a launch happens.
-function tierOf(odds) { return odds >= 0.75 ? 'robust' : odds >= 0.5 ? 'farm' : odds >= 0.25 ? 'thin' : 'skip'; }
+function tierOf(odds) { return odds >= 0.8 ? 'farm' : odds >= 0.6 ? 'marginal' : 'skip'; }
 
 var PLAYS = {
   lending: ['Deposit {cap} of a stable asset into {name} on {chain} as collateral, and keep the loan-to-value under 40% if you borrow.', 'borrow about {fifth}, hold it a day and repay it, so supply and borrow are both recorded.'],
@@ -270,17 +256,19 @@ function farmPlan(p, v, o, m) {
   var act = PLAYS[kindOf(p.category)].map(function (s) { return s.replace(/\{(\w+)\}/g, function (_, k) { return words[k]; }); });
   var core = act[0], weekly = act[1];
   var steps = [
-    { text: 'Open a fresh wallet that holds only the farm funds, keep its seed phrase offline, and connect it to ' + name + ' on ' + chain + ', the cheapest of its ' + p.chains.length + ' chains.', cost: 'about ' + money(fee) + ' for the first approval', time: '10 minutes' },
-    { text: core, cost: cap + ' you get back, plus about ' + money(fee * 2) + ' in fees', time: '20 minutes' },
-    { text: when + weekly, cost: 'about ' + money(fee * 2) + ' in fees each time', time: '15 minutes ' + (costly ? 'every second week' : 'a week') },
-    { text: 'Keep the position open for ' + weeks + ' weeks. ' + (v.age === null ? 'DefiLlama gives no start date, so assume a long window.' : 'It has gone ' + v.age + ' days with no token' + (v.age < 180 ? ', so a program, if one comes, may count early users.' : ', so a program, if any, may weigh how long a wallet stayed.')), cost: 'the ' + cap + ' gives up about ' + money(e.carry) + ' of T-bill return at ' + P.tbill * 100 + '% a year', time: weeks + ' weeks' }
+    { when: 'Day 0', text: 'Open a fresh wallet that holds only the farm funds, keep its seed phrase offline, and connect it to ' + name + ' on ' + chain + ', the cheapest of its ' + p.chains.length + ' chains.', cost: 'about ' + money(fee) + ' for the first approval', time: '10 minutes' },
+    { when: 'Day 0', text: core, cost: cap + ' you get back, plus about ' + money(fee * 2) + ' in fees', time: '20 minutes' },
+    { when: costly ? 'Every 2nd week' : 'Weekly', text: when + weekly, cost: 'about ' + money(fee * 2) + ' in fees each time', time: '15 minutes' },
+    { when: 'Weeks 1 to ' + weeks, text: 'Keep the position open for ' + weeks + ' weeks. ' + (v.age === null ? 'DefiLlama gives no start date, so assume a long window.' : 'It has gone ' + v.age + ' days with no token' + (v.age < 180 ? ', so a program, if one comes, may count early users.' : ', so a program, if any, may weigh how long a wallet stayed.')), cost: 'the ' + cap + ' gives up about ' + money(e.carry) + ' of T-bill return at ' + P.tbill * 100 + '% a year', time: weeks + ' weeks' }
   ];
-  if (p.chains.length > 1) steps.push({ text: 'Make one small action on a second chain with the same wallet, since ' + name + ' records TVL on ' + p.chains.length + ' chains.', cost: 'about ' + money(Math.max(fee, feePerTx(p.chains[1])) * 2) + ' in fees', time: '20 minutes' });
-  steps.push({
-    text: 'If a launch happens, ' + cap + ' at a farmer share of ' + Math.round(share * 100) + '% earns ' + money(e.reward.base) + ' (band ' + money(e.reward.low) + ' to ' + money(e.reward.high) + ') against ' + money(e.costs) + ' of fees, friction and T-bill carry: ' + signed(e.net.base) + '. It needs a launch chance of ' + (isFinite(needBase) ? pct(Math.min(needBase, 9.99)) : 'more than 100%') + ' to break even. ' + (isFinite(minBase) ? 'The smallest ticket that pays is ' + money(minBase) + '.' : 'No ticket pays: each dollar\'s slice is below the T-bill return.') + ' The band keeps the net above zero ' + pct(odds) + ' of the time. Tier: ' + tier + '.' + (fees / C > P.highFee ? ' Fees alone are ' + Math.round((fees / C) * 100) + '% of the ticket.' : ''),
-    cost: money(e.costs) + ' in all', time: 'decide before you deposit'
+  if (p.chains.length > 1) steps.push({ when: 'Week 1', text: 'Make one small action on a second chain with the same wallet, since ' + name + ' records TVL on ' + p.chains.length + ' chains.', cost: 'about ' + money(Math.max(fee, feePerTx(p.chains[1])) * 2) + ' in fees', time: '20 minutes' });
+  steps.unshift({
+    when: 'Before day 0', text: 'If a launch happens, ' + cap + ' at a farmer share of ' + Math.round(share * 100) + '% earns ' + money(e.reward.base) + ' (band ' + money(e.reward.low) + ' to ' + money(e.reward.high) + ') against ' + money(e.costs) + ' of fees, friction and T-bill carry: ' + signed(e.net.base) + '. It needs a launch chance of ' + (isFinite(needBase) ? pct(Math.min(needBase, 9.99)) : 'more than 100%') + ' to break even. ' + (isFinite(minBase) ? 'The smallest ticket that pays is ' + money(minBase) + '.' : 'No ticket pays: each dollar\'s slice is below the T-bill return.') + ' The band keeps the net above zero ' + pct(odds) + ' of the time. Tier: ' + tier + '.' + (fees / C > P.highFee ? ' Fees alone are ' + Math.round((fees / C) * 100) + '% of the ticket.' : ''),
+    cost: money(e.costs) + ' in all', time: '10 minutes'
   });
-  steps.push({ text: 'Before you withdraw, claim only from the link on the protocol\'s own rewards page, never sign a message that approves your whole balance, and log the dates and hashes.', cost: 'no fee to check, and never pay to claim', time: '15 minutes' });
+  var drop = clamp(Math.abs(p.change_7d || 0) / 50, 0.1, 0.5);
+  steps.push({ when: 'Any day', text: 'Stop rule: if DefiLlama shows ' + name + ' TVL below ' + money(p.tvl_usd * (1 - drop)) + ' (' + Math.round(drop * 100) + '% under today\'s ' + money(p.tvl_usd) + ', or twice its 7-day move), withdraw at once and end the plan.', cost: 'about ' + money(fee) + ' to withdraw', time: '15 minutes' });
+  steps.push({ when: 'Week ' + weeks, text: 'Withdraw. Claim only from the link on the protocol\'s own rewards page, never sign a message that approves your whole balance, and log the dates and hashes.', cost: 'about ' + money(fee) + ' in fees, and never pay to claim', time: '15 minutes' });
   return {
     chain: chain, fee: fee, weeks: weeks, active: active, costly: costly, days: days, fees: fees, hours: hours,
     capital: C, share: share, costs: e.costs, friction: e.friction, carry: e.carry, reward: e.reward, net: e.net,
@@ -321,7 +309,7 @@ function buildBoard(snap, opts) {
   var aside = snap.protocols.filter(function (p) { return !recordsToken(p) && setAsideReason(p); })
     .sort(function (a, b) { return b.tvl_usd - a.tvl_usd; })
     .map(function (p) { return { name: p.name, category: p.category, tvl: p.tvl_usd, reason: setAsideReason(p) }; });
-  var tiers = { robust: 0, farm: 0, thin: 0, skip: 0 };
+  var tiers = { farm: 0, marginal: 0, skip: 0 };
   rows.forEach(function (r) { tiers[r.verdict]++; });
   return { model: m, rows: rows, opts: opts, aside: aside, tiers: tiers, withToken: snap.protocols.filter(recordsToken).length };
 }

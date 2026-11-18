@@ -6,7 +6,7 @@
 
 Pre-Token Radar: a dashboard that ranks DeFi protocols with no recorded token by an implied token value, and gives each one a farm plan with costs and times.
 
-The value model learns from the protocols that already trade. It fits market cap divided by TVL against size and category, then scales a protocol's TVL by that ratio and by three bounded multipliers (7-day growth, time with no token, chain breadth). No protocol name is special-cased. The page states the model on its Method tab, shows the arithmetic for each row, and flags farm plans where fees are a large share of the position. Implied value is this entry's own estimate, not a forecast that any token launches.
+The value model learns from the protocols that already trade. It fits market cap divided by TVL against size and category, then scales a protocol's TVL by that ratio and by two bounded multipliers (7-day growth and time with no token). No protocol name is special-cased. The first screen shows the model and its blind test against flat and size-only versions, and each row has a file with the arithmetic and a day-by-day farm table, and flags farm plans where fees are a large share of the position. Implied value is this entry's own estimate, not a forecast that any token launches.
 
 `PLAN.md` holds the plan the entry was built from.
 
